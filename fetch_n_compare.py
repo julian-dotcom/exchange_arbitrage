@@ -14,7 +14,7 @@ from utils.pprint_helper import pprint
 # =============================================================================
 LIMIT = {"1m": 1440, "5m": 288, "1h": 24}
 MS_PER_DAY = 24 * 60 * 60 * 1000
-PATH = "/Users/julian/Documents/eth_arbitrage/data.csv"
+PATH = "/Users/julian/Documents/exchange_arbitrage/data.csv"
 
 # =============================================================================
 # MAIN
@@ -136,10 +136,11 @@ def combine_dataframes(combined, exchange_str, df):
 # Add stats like max, min, median, mean to df
 # =============================================================================
 def add_stats_to_combined_df(combined):
-    combined["max"] = combined.max(axis=1)
-    combined["min"] = combined.min(axis=1)
-    combined["mean"] = combined.mean(axis=1)
-    combined["median"] = combined.median(axis=1)
+    columns = list(combined.columns)
+    combined["max"] = combined[columns].max(axis=1)
+    combined["min"] = combined[columns].min(axis=1)
+    combined["mean"] = combined[columns].mean(axis=1)
+    combined["median"] = combined[columns].median(axis=1)
     return combined
 
 
