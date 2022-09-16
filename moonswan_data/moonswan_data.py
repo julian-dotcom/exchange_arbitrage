@@ -1,10 +1,12 @@
 # =============================================================================
 # IMPORTS
 # =============================================================================
+import enum
 import pandas as pd
 import datetime as dt
 import sys, os, time
 import glob
+from pprint import pprint
 
 # sys.path.append(os.path.abspath("./utils"))
 # from utils.pprint_helper import pprint
@@ -20,74 +22,138 @@ OUTPUT_PATH = "/Users/julian/Documents/exchange_arbitrage/moonswan_data/processe
 # =============================================================================
 # FILES
 # =============================================================================
-DOWNTIME_FILES = glob.glob(os.path.join(INPUT_PATH, "*.csv"))
+FILES = glob.glob(os.path.join(INPUT_PATH, "*.csv"))
 
 # =============================================================================
 # MAIN
 # =============================================================================
 def main():
-    prices_obj = get_data_from_csv()
-    merged_obj = structure_data_by_column(prices_obj)
-    merged_obj = compute_stats_on_data(merged_obj)
-    for column, df in merged_obj.items():
-        df.round(2).to_csv(f"{OUTPUT_PATH}/minute_{column}.csv")
-    daily_obj = process_all_to_daily_data(merged_obj)
-    for column, df in daily_obj.items():
-        df.round(2).to_csv(f"{OUTPUT_PATH}/daily_{column}.csv")
+    original_data = get_data_from_csv()
+    unique_pairs = create_unique_exchange_pairs(original_data)
+
+    merged_obj = structure_data_by_column(original_data)
+    diff_obj = compute_differences(unique_pairs, merged_obj)
+    for column, df in diff_obj.items():
+        # df.round(3).to_csv(f"{OUTPUT_PATH}/minute_data_{column}.csv")
+        stats = df[unique_pairs].describe()
+        # stats.round(3).to_csv(f"{OUTPUT_PATH}/minute_stats_{column}.csv")
+
+    daily_stats = compute_daily_stats(unique_pairs, diff_obj)
+    for col, val in daily_stats.items():
+        for pair, df in val.items():
+            df.round(3).to_csv(f"{OUTPUT_PATH}/daily_{col}_{pair}.csv")
 
 
 # =============================================================================
 # Get data from csvs
 # =============================================================================
 def get_data_from_csv():
-    data_obj = {}
-    for file in DOWNTIME_FILES:
+    original_data = {}
+    for file in FILES:
         exchange = file.split("/")[-1].split(".")[0].split("-")[-1]
         df = pd.read_csv(file)
-        data_obj[exchange] = df
-    return data_obj
+        original_data[exchange] = df
+    return original_data
+
+
+# =============================================================================
+# Create all unique exchange pairs
+# =============================================================================
+def create_unique_exchange_pairs(original_data):
+    exchanges = list(original_data.keys())
+    i = 0
+    pairs = []
+    for i, ex in enumerate(exchanges):
+        j = i + 1
+        if j == len(exchanges):
+            break
+        for ex2 in exchanges[j:]:
+            pairs.append(f"{ex}-{ex2}")
+    return pairs
 
 
 # =============================================================================
 # Create dataframes for bid, ask, mid
 # =============================================================================
-def structure_data_by_column(prices_obj):
-    merged_obj = {"bid": None, "ask": None, "mid": None}
-    for column, merged in merged_obj.items():
-        merged = structure_data_by_exchange(prices_obj, column, merged)
-        merged_obj[column] = merged
+def structure_data_by_column(original_data):
+    merged_obj = {}
+    columns = ["bid", "ask", "mid"]
+    for column in columns:
+        merged_obj[column] = structure_data_by_exchange(original_data, column)
     return merged_obj
 
 
 # =============================================================================
 # Create dataframes for bid, ask, mid
 # =============================================================================
-def structure_data_by_exchange(prices_obj, column, merged):
-    for exchange, prices in prices_obj.items():
+def structure_data_by_exchange(original_data, column):
+    merged = None
+    for exchange, df in original_data.items():
+        prices = df[["timestamp", column]]
         prices = prices.rename(columns={column: exchange})
-
         if merged is None:
-            merged = prices[["timestamp", exchange]]
+            merged = prices
         else:
-            merged = pd.merge(
-                merged, prices[["timestamp", exchange]], on="timestamp", how="inner"
-            )
+            merged = pd.merge(merged, prices, on="timestamp", how="inner")
     merged = merged.set_index("timestamp")
     return merged
 
 
 # =============================================================================
-# Iterate over obj and compute stats like mean, median, min, max
+# Compute the differences for all prices
 # =============================================================================
-def compute_stats_on_data(merged_obj):
+def compute_differences(unique_pairs, merged_obj):
+    diff_obj = {}
     for column, df in merged_obj.items():
-        columns = list(df.columns)
-        df["max"] = df[columns].max(axis=1)
-        df["min"] = df[columns].min(axis=1)
-        df["mean"] = df[columns].mean(axis=1)
-        df["median"] = df[columns].median(axis=1)
-        merged_obj[column] = df
-    return merged_obj
+        diff_obj[column] = compute_differences_between_exchanges(unique_pairs, df)
+    return diff_obj
+
+
+# =============================================================================
+# Compute the differences between exchanges
+# =============================================================================
+def compute_differences_between_exchanges(unique_pairs, df):
+    for pair in unique_pairs:
+        ex1, ex2 = pair.split("-")
+        df[pair] = abs(df[ex1] - df[ex2])
+    return df
+
+
+# =============================================================================
+# Compute daily stats on dfs
+# =============================================================================
+def compute_daily_stats(unique_pairs, diff_obj):
+    daily_stats = {}
+    for column, df in diff_obj.items():
+        daily_stats[column] = compute_daily_stats_for_df(unique_pairs, df)
+    return daily_stats
+
+
+# =============================================================================
+# Compute daily stats on df
+# =============================================================================
+def compute_daily_stats_for_df(unique_pairs, df):
+    day_stats = {}
+    df.index = pd.to_datetime(df.index)
+    for pair in unique_pairs:
+        p_data = df[pair]
+        day_stats[pair] = compute_daily_stats_for_pair(p_data)
+    return day_stats
+
+
+# =============================================================================
+# Compute daily stats on row
+# =============================================================================
+def compute_daily_stats_for_pair(p_data):
+    day_stats = {}
+    tracker = None
+    _max = p_data.resample("D").max()
+    _min = p_data.resample("D").min()
+    mean = p_data.resample("D").mean()
+    stats = _max.to_frame(name="max")
+    stats["min"] = _min
+    stats["mean"] = mean
+    return stats
 
 
 # =============================================================================
@@ -122,12 +188,3 @@ def process_df_to_start_n_end_midnight(df):
 
 if __name__ == "__main__":
     main()
-
-
-# df = df.rename(
-#     columns={
-#         "bid": f"{exchange}-bid",
-#         "ask": f"{exchange}-ask",
-#         "mid": f"{exchange}-mid",
-#     }
-# )
